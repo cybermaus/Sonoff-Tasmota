@@ -1,3 +1,11 @@
+# Cybermaus fork
+Just some minro personal changes to Theo Ahrends build
+I may occasionally merge, when I need it myself.
+- KNX improvement: on UDP by sending 5 times with small delay rathern then 3 times immediate
+- KNX improvement: when Power command received via KNX, then do not send via KNX (no reflections)
+- RTC improvement: keep time during software reboot by storing in RTC memory (does not work for unplugged reboots)
+- RTC improvement: Reject suspect NTP update with drift > 100 hours, unless two NTP packets agree on such drift.
+
 <img src="/tools/logo/TASMOTA_FullLogo_Vector.svg" alt="Logo" align="right" height="76"/>
 
 # Sonoff-Tasmota

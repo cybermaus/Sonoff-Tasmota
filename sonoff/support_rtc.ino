@@ -53,6 +53,7 @@ struct RTC {
   bool midnight_now = false;
   bool user_time_entry = false;               // Override NTP by user setting
 } Rtc;
+uint32_t ntp_time_prev; // Remember previous ntp with large drift
 
 uint32_t UtcTime(void)
 {
@@ -380,6 +381,14 @@ void RtcSecond(void)
     uint8_t offset = (uptime < 30) ? RtcTime.second : (((ESP.getChipId() & 0xF) * 3) + 3) ;  // First try ASAP to sync. If fails try once every 60 seconds based on chip id
     if (!global_state.wifi_down && (((offset == RtcTime.second) && ((RtcTime.year < 2016) || (Rtc.ntp_sync_minute == RtcTime.minute))) || ntp_force_sync)) {
       Rtc.ntp_time = sntp_get_current_timestamp();
+      // Reject when unlikely large drift, but accept when previous showed similar large drift
+      if (!ntp_force_sync && Rtc.utc_time > START_VALID_TIME && Rtc.ntp_time > START_VALID_TIME) {
+        if ( abs(Rtc.ntp_time - Rtc.utc_time) > 360000 && abs(Rtc.ntp_time - ntp_time_prev) > 360000 ) {
+//          AddLog_P2(LOG_LEVEL_ERROR, PSTR("NTP: Rejected time %u with drift %u"), Rtc.ntp_time, Rtc.ntp_time - Rtc.utc_time);
+          ntp_time_prev = Rtc.ntp_time; // Remember previous ntp with large drift
+          Rtc.ntp_time = 0; // Reject (reset) NTP time
+        }
+      }
     }
     if (Rtc.ntp_time > START_VALID_TIME) {  // Fix NTP bug in core 2.4.1/SDK 2.2.1 (returns Thu Jan 01 08:00:10 1970 after power on)
       ntp_force_sync = false;

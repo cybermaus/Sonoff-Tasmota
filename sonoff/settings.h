@@ -397,6 +397,8 @@ struct RTCMEM {
   EnergyUsage   energy_usage;              // 2B0
   uint8_t       free_038[36];              // 2C8
                                            // 2EC - 2FF free locations
+  uint32_t      utc_time;                  // 2EC
+                                           // 2F0 - 2FF remaining free locations
 } RtcSettings;
 
 struct TIME_T {

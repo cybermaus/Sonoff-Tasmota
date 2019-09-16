@@ -370,39 +370,46 @@ void RtcSecond(void)
   TIME_T tmpTime;
 
   if (!Rtc.user_time_entry) {
+    Rtc.ntp_time=0; // Reset NTP to indicate no NTP found (yet)
+    // Initialize NTP time from RTC memory 
+    if (RtcSettings.utc_time > START_VALID_TIME && Rtc.utc_time < START_VALID_TIME) {
+      Rtc.ntp_time = RtcSettings.utc_time + 1;  // Add one second for estimated reboot duration
+    }
+    // Sync time from NTP
     if ((Rtc.ntp_sync_minute > 59) && (RtcTime.minute > 2)) Rtc.ntp_sync_minute = 1;                 // If sync prepare for a new cycle
     uint8_t offset = (uptime < 30) ? RtcTime.second : (((ESP.getChipId() & 0xF) * 3) + 3) ;  // First try ASAP to sync. If fails try once every 60 seconds based on chip id
     if (!global_state.wifi_down && (((offset == RtcTime.second) && ((RtcTime.year < 2016) || (Rtc.ntp_sync_minute == RtcTime.minute))) || ntp_force_sync)) {
       Rtc.ntp_time = sntp_get_current_timestamp();
-      if (Rtc.ntp_time > START_VALID_TIME) {  // Fix NTP bug in core 2.4.1/SDK 2.2.1 (returns Thu Jan 01 08:00:10 1970 after power on)
-        ntp_force_sync = false;
-        if (Rtc.utc_time > START_VALID_TIME) { Rtc.drift_time = Rtc.ntp_time - Rtc.utc_time; }
-        Rtc.utc_time = Rtc.ntp_time;
-        Rtc.ntp_sync_minute = 60;  // Sync so block further requests
-        if (Rtc.restart_time == 0) {
-          Rtc.restart_time = Rtc.utc_time - uptime;  // save first ntp time as restart time
-        }
-        BreakTime(Rtc.utc_time, tmpTime);
-        RtcTime.year = tmpTime.year + 1970;
-        Rtc.daylight_saving_time = RuleToTime(Settings.tflag[1], RtcTime.year);
-        Rtc.standard_time = RuleToTime(Settings.tflag[0], RtcTime.year);
-
-        // Do not use AddLog here if syslog is enabled. UDP will force exception 9
-  //      AddLog_P2(LOG_LEVEL_DEBUG, PSTR(D_LOG_APPLICATION "(" D_UTC_TIME ") %s, (" D_DST_TIME ") %s, (" D_STD_TIME ") %s"), GetTime(0).c_str(), GetTime(2).c_str(), GetTime(3).c_str());
-        ntp_synced_message = true;
-
-        if (Rtc.local_time < START_VALID_TIME) {  // 2016-01-01
-          rules_flag.time_init = 1;
-        } else {
-          rules_flag.time_set = 1;
-        }
-      } else {
-        Rtc.ntp_sync_minute++;  // Try again in next minute
+    }
+    if (Rtc.ntp_time > START_VALID_TIME) {  // Fix NTP bug in core 2.4.1/SDK 2.2.1 (returns Thu Jan 01 08:00:10 1970 after power on)
+      ntp_force_sync = false;
+      if (Rtc.utc_time > START_VALID_TIME) { Rtc.drift_time = Rtc.ntp_time - Rtc.utc_time; }
+      Rtc.utc_time = Rtc.ntp_time;
+      Rtc.ntp_sync_minute = 60;  // Sync so block further requests
+      if (Rtc.restart_time == 0) {
+        Rtc.restart_time = Rtc.utc_time - uptime;  // save first ntp time as restart time
       }
+      BreakTime(Rtc.utc_time, tmpTime);
+      RtcTime.year = tmpTime.year + 1970;
+      Rtc.daylight_saving_time = RuleToTime(Settings.tflag[1], RtcTime.year);
+      Rtc.standard_time = RuleToTime(Settings.tflag[0], RtcTime.year);
+
+      // Do not use AddLog here if syslog is enabled. UDP will force exception 9
+  //      AddLog_P2(LOG_LEVEL_DEBUG, PSTR(D_LOG_APPLICATION "(" D_UTC_TIME ") %s, (" D_DST_TIME ") %s, (" D_STD_TIME ") %s"), GetTime(0).c_str(), GetTime(2).c_str(), GetTime(3).c_str());
+      ntp_synced_message = true;
+
+      if (Rtc.local_time < START_VALID_TIME) {  // 2016-01-01
+        rules_flag.time_init = 1;
+      } else {
+        rules_flag.time_set = 1;
+      }
+    } else {
+      Rtc.ntp_sync_minute++;  // Try again in next minute
     }
   }
   Rtc.utc_time++;
   Rtc.local_time = Rtc.utc_time;
+  RtcSettings.utc_time = Rtc.utc_time; // Store time in RTC-Memory
   if (Rtc.local_time > START_VALID_TIME) {  // 2016-01-01
     int16_t timezone_minutes = Settings.timezone_minutes;
     if (Settings.timezone < 0) { timezone_minutes *= -1; }

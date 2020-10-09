@@ -619,7 +619,38 @@ void ESPKNXIP::__loop_knx()
   }
 #endif
 
-  DEBUG_PRINTLN(F("=="));
+  // 2020-10-09 Maurits van Dueren 
+  // If the KNX packet is a self-proclaimed repeat, and we did receive it before, then ignore
+  // NB: Actually, because compatibility with old style Tasmota KNX Enhance, we cannot rely on self-proclaimed repeat
+  //bool knx_repeat = (cemi_data->control_1.bits.repeat == 0x00); // 0 = repeated telegram, 1 = not repeated telegram
+
+  bool knx_repeat = KNX_filter(cemi_data, KNX_FILTERTYPE_REPEAT);
+  bool knx_repeat = true;
+  // Memory of previous KNX telegram
+  cemi_service_t *cemi_data_prev = (cemi_service_t *)cemi_data_prev_buf;
+  if (knx_repeat && (millis()-cemi_data_prev_stale)>CEMI_DATA_STALE_DURATION) { 
+    DEBUG_PRINTLN(F("Dropping stale buffer."));
+    knx_repeat = false; 
+  }
+  if (knx_repeat && (cemi_data->data_len == cemi_data_prev->data_len)) { 
+    size_t cmplen = sizeof cemi_data->source + 
+                    sizeof cemi_data->destination +
+                    sizeof cemi_data->data_len +
+                    sizeof cemi_data->pci + 
+                    cemi_data->data_len;
+    knx_repeat = (0==memcmp(&cemi_data->source, &cemi_data_prev->source, cmplen));
+  } else {
+    knx_repeat=false;
+  }
+  if (knx_repeat) { 
+    DEBUG_PRINTLN(F("Dropping repeated telegram."));
+    return;
+  } else {
+    // Remember telegram for next compare
+    size_t cpylen = min(sizeof *cemi_data + cemi_data->data_len, sizeof cemi_data_prev_buf);
+    memcpy(cemi_data_prev, cemi_data, cpylen );
+    cemi_data_prev_stale=millis();
+  }
 
   // Call callbacks
   for (int i = 0; i < registered_callback_assignments; ++i)

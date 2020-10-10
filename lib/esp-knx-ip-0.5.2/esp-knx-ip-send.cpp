@@ -82,13 +82,13 @@ void ESPKNXIP::send(address_t const &receiver, knx_command_type_t ct, uint8_t da
 	if ( !KNX_filter(cemi_data, KNX_FILTERTYPE_REFLECT)) {
  
       // 2020-10-09 Maurits van Dueren : Repeat KNX telegrams
-	  for (byte i=KNX_REPEAT_COUNT; i>=0; i--) {
+	  for (byte i=1+KNX_REPEAT_COUNT; i>0; i--) {
 #endif
   	    udp.beginPacketMulticast(MULTICAST_IP, MULTICAST_PORT, WiFi.localIP());
 	    udp.write(buf, len);
  	    udp.endPacket();
 #ifdef KNX_REPEAT_FILTER
-  		if (i==KNX_REPEAT_COUNT) {
+  		if (i==1+KNX_REPEAT_COUNT) {
           cemi_data->control_1.bits.repeat = 0x00; // 0 = repeated telegram, 1 = not repeated telegram
 #if SEND_CHECKSUM
 	      buf[len - 1] ^= 0x01; // fix checksum because of above changed repeat bit

@@ -47,7 +47,7 @@
 #define SEND_CHECKSUM             0
 
 // Uncomment to enable printing out debug messages.
-#define ESP_KNX_DEBUG
+//#define ESP_KNX_DEBUG
 /**
  * END CONFIG
  */
@@ -599,7 +599,7 @@ extern ESPKNXIP knx;
 
 // 2020-10-09 Maurits van Dueren : repeat filter 
 #define KNX_REPEAT_FILTER
-  #ifdef KNX_REPEAT_FILTER
+#ifdef KNX_REPEAT_FILTER
   #define CEMI_DATA_STALE_DURATION 500 // in ms 
   #define KNX_FILTERTYPE_REPEAT 0x00 
   #define KNX_FILTERTYPE_REFLECT 0x01 

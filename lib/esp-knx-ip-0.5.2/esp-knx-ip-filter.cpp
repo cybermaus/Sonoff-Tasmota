@@ -1,20 +1,28 @@
 /**
  * esp-knx-ip library for KNX/IP communication on an ESP8266
- * Main Author KNX driver for ESP: Nico Weichbrodt <envy>
+ * Main Author KNX driver for ESP Nico Weichbrodt <envy>
  * This file: Maurits van Dueren <cybermaus>
  * License: MIT
+ * 
+ * 2020-10-09 Maurits van Dueren : Repeat filter and No Reflected broadcast
+ * Rudimentary implementation/emulation of the KNX telegram repeat: 
+ * https://support.knx.org/hc/en-us/articles/115003188269-LL-acknowledgement
+ * 
+ * This version does not timeout on its wait for ACK/NACK. Instead it just 
+ * sends them 3 extra times. But the receive does filters out duplicate telegrams
+ * in this link layer driver (LL) rahter then leave to the above application layer
+ * Also we do set the repeat bit, so maybe works better with other KNX implementations
+ * 
+ * Additionally, we do not send out telegrams that are the result of, and exact copy of
+ * one we just received. Not sure if this is KNX spec, but it is very useful to avoid
+ * network broadcast storms
  */
 
 #include "esp-knx-ip.h"
 
-// 2020-10-09 Maurits van Dueren : Repeat filter and No Reflected broadcast
-// Memory for previous KNX frame to aid in simple repeat & reflection filter
-// This only supports normal telegrams up to 23 characters
 uint8_t cemi_data_prev_buf[23]; // Memory for previous received KNX telegram
 uint32_t cemi_data_prev_stale;  // When the previous telegram turns stale 
-#define CEMI_DATA_STALE_DURATION 500 // in ms 
-#define KNX_FILTERTYPE_REPEAT 0x00 
-#define KNX_FILTERTYPE_REFLECT 0x01 
+/* low intensity KNX is assumed, memory is only one deep.
 
 /**
  * Filter functions
@@ -23,17 +31,19 @@ uint32_t cemi_data_prev_stale;  // When the previous telegram turns stale
 
 bool KNX_filter(cemi_service_t *cemi_data, uint8_t knx_filtertype)
 {
-  bool knx_filter = true; // assume we have to filter
   // Memory of previous KNX telegram
   cemi_service_t *cemi_data_prev = (cemi_service_t *)cemi_data_prev_buf;
 
-  if (knx_filter && (millis()-cemi_data_prev_stale)>CEMI_DATA_STALE_DURATION) { 
-    DEBUG_PRINTLN(F("Ignoring stale buffer."));
-    knx_filter = false; 
-  }
+  //Because old style Tasmota KNX Enhance, we cannot trust the received repeat bit
+  //bool knx_filter = (cemi_data->control_1.bits.repeat == 0x00); // 0 = repeated telegram, 1 = not repeated telegram
+
+  bool knx_filter = (millis()-cemi_data_prev_stale)<CEMI_DATA_STALE_DURATION;
+#ifdef ESP_KNX_DEBUG
+  if (!knx_filter) { DEBUG_PRINTLN(F("Ignoring stale filter buffer.")); }
+#endif
 
   if (knx_filter && (cemi_data->data_len == cemi_data_prev->data_len)) { 
-    if (knx_filtertype==KNX_FILTER_REPEAT) {
+    if (knx_filtertype==KNX_FILTERTYPE_REPEAT) {
       size_t cmplen = sizeof cemi_data->source +
                       sizeof cemi_data->destination +
                       sizeof cemi_data->data_len +
@@ -45,7 +55,7 @@ bool KNX_filter(cemi_service_t *cemi_data, uint8_t knx_filtertype)
                       sizeof cemi_data->data_len +
                       sizeof cemi_data->pci + 
                       cemi_data->data_len;
-      knx_filter = (0==memcmp(&cemi_data->destination, &cemi_data_prev->source, cmplen));
+      knx_filter = (0==memcmp(&cemi_data->destination, &cemi_data_prev->destination, cmplen));
     }      
   } else {
     knx_filter=false;
@@ -61,10 +71,10 @@ bool KNX_filter(cemi_service_t *cemi_data, uint8_t knx_filtertype)
 #endif
   
   if (!knx_filter && knx_filtertype==KNX_FILTERTYPE_REPEAT) {
-    // Remember telegram for next compare
+    // Remember new accepted telegram as new filter
     size_t cpylen = min(sizeof *cemi_data + cemi_data->data_len, sizeof cemi_data_prev_buf);
     memcpy(cemi_data_prev, cemi_data, cpylen );
-    cemi_data_prev_stale=millis();
+    cemi_data_prev_stale = millis();
   }
 
   return knx_filter;

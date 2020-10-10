@@ -47,7 +47,7 @@
 #define SEND_CHECKSUM             0
 
 // Uncomment to enable printing out debug messages.
-//#define ESP_KNX_DEBUG
+#define ESP_KNX_DEBUG
 /**
  * END CONFIG
  */
@@ -596,5 +596,12 @@ class ESPKNXIP {
 
 // Global "singleton" object
 extern ESPKNXIP knx;
+
+// 2020-10-09 Maurits van Dueren : repeat filter 
+#define CEMI_DATA_STALE_DURATION 500 // in ms 
+#define KNX_FILTERTYPE_REPEAT 0x00 
+#define KNX_FILTERTYPE_REFLECT 0x01 
+#define KNX_REPEAT_COUNT 0x03        // as per KNX specification 
+bool KNX_filter(cemi_service_t *cemi_data, uint8_t knx_filtertype);
 
 #endif

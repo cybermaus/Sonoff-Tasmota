@@ -78,51 +78,22 @@ void ESPKNXIP::send(address_t const &receiver, knx_command_type_t ct, uint8_t da
 #endif
 
     // 2020-10-09 Maurits van Dueren : No reflected broadcast 
-	// If the to be broadcasted telegram is an exact copy of one we just received, 
-	// then do not send it. This is to avoid network storms by applying telegram to the switch that is
-	// set to send out its state again.
-	// Not sure if this is part of the KNX specification, but I find it extremely usefull for puttin several
-	// switches in the same broadcast group, without worrying about which is initating an event.
-    bool knx_repeat = true; // assume it is reflected (repeated)
-    // Memory of previous KNX telegram
-    cemi_service_t *cemi_data_prev = (cemi_service_t *)cemi_data_prev_buf;
-    if (knx_repeat && (millis()-cemi_data_prev_stale)>CEMI_DATA_STALE_DURATION) { 
-      DEBUG_PRINTLN(F("Dropping stale buffer."));
-      knx_repeat = false; 
-    }
-    if (knx_repeat && (cemi_data->data_len == cemi_data_prev->data_len)) { 
-      size_t cmplen = sizeof cemi_data->destination +
-                      sizeof cemi_data->data_len +
-                      sizeof cemi_data->pci + 
-                      cemi_data->data_len;
-      knx_repeat = (0==memcmp(&cemi_data->destination, &cemi_data_prev->source, cmplen));
-    } else {
-      knx_repeat=false;
-    }
-    if (!knx_repeat) { 
+	if ( !KNX_filter(cemi_data, KNX_FILTERTYPE_REFLECT)) {
  
       // 2020-10-09 Maurits van Dueren : Repeat KNX telegrams
-      // Rudimentary implementation of the KNX protocol repeated telegram
-  	  // However, rather then waiting for a time out on ACK, we just send 3 extra copies unsolicited.
-	  // The receiver implementation filters them out again.
-	  // I put this here, rather then the Tasmota KNX driver, as here it is a single block for all data types
-	  // NOTE: Official KNX protocol only sends repeat after no acknowledge is received, but 
-	  // presumeably, it knows how to deal with missing acknowledgements, and thus unsolicited repeats as well.
-	  // Ideally UDP repeats should not be immediately after each other, so the official 'wait for ACK' would be better
-	  for (byte i=1+3; i>0; i--) {
+	  for (byte i=1+KNX_REPEAT_COUNT; i>0; i--) {
   	    udp.beginPacketMulticast(MULTICAST_IP, MULTICAST_PORT, WiFi.localIP());
 	    udp.write(buf, len);
  	    udp.endPacket();
-		if (i==1+3) {
+		if (i==1+KNX_REPEAT_COUNT) {
           cemi_data->control_1.bits.repeat = 0x00; // 0 = repeated telegram, 1 = not repeated telegram
-	      #if SEND_CHECKSUM
+#if SEND_CHECKSUM
 	      buf[len - 1] ^= 0x01; // fix checksum because of above changed repeat bit
-          #endif
+#endif
 		}
 	  }
-	} else {
-      DEBUG_PRINTLN(F("Dropping reflected telegram."));
 	}
+	
 }
 
 void ESPKNXIP::send_1bit(address_t const &receiver, knx_command_type_t ct, uint8_t bit)

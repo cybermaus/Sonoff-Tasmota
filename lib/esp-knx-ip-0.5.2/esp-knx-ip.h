@@ -603,7 +603,7 @@ extern ESPKNXIP knx;
   #define CEMI_DATA_STALE_DURATION 500 // in ms 
   #define KNX_FILTERTYPE_REPEAT 0x00 
   #define KNX_FILTERTYPE_REFLECT 0x01 
-  #define KNX_REPEAT_COUNT 0x03        // as per KNX specification 
+  #define KNX_REPEAT_COUNT 0x13        // as per KNX specification 
   bool KNX_filter(cemi_service_t *cemi_data, uint8_t knx_filtertype);
 #endif
 

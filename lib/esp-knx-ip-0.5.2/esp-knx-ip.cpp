@@ -619,6 +619,8 @@ void ESPKNXIP::__loop_knx()
   }
 #endif
 
+  DEBUG_PRINTLN(F("=="));
+  
 #ifdef KNX_REPEAT_FILTER
   // 2020-10-09 Maurits van Dueren : Filter repeated telegrams
 	if ( KNX_filter(cemi_data, KNX_FILTERTYPE_REPEAT)) { return; }

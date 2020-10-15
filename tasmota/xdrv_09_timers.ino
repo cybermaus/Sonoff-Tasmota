@@ -163,50 +163,57 @@ void DuskTillDawn(uint8_t *hour_up,uint8_t *minute_up, uint8_t *hour_down, uint8
   *minute_down = UntergangMinuten;
 }
 
-void ApplyTimerOffsets(Timer *duskdawn)
+void ApplyTimerOffsets(Timer *duskdawn, uint32_t i)
 {
   uint8_t hour[2];
   uint8_t minute[2];
-  Timer stored = (Timer)*duskdawn;
+  uint8_t mode = duskdawn->mode&0x01;
+  sint16_t timeBuffer = timer_window[i]; // Random offset window
+  
+#ifdef USE_SUNRISE
+  if ((1 == duskdawn->mode) || (2 == duskdawn->mode)) {      // Sunrise or Sunset
+    // replace hours, minutes by sunrise
+    DuskTillDawn(&hour[1], &minute[1], &hour[0], &minute[0]);
 
-  // replace hours, minutes by sunrise
-  DuskTillDawn(&hour[0], &minute[0], &hour[1], &minute[1]);
-  uint8_t mode = (duskdawn->mode -1) &1;
-  duskdawn->time = (hour[mode] *60) + minute[mode];
-
-  if (hour[mode]==255) {
-    // Permanent day/night sets the unreachable limit values
-    if ((Settings.latitude > 0) != (RtcTime.month>=4 && RtcTime.month<=9)) {
-      duskdawn->time=2046; // permanent night 
-    } else {
-      duskdawn->time=2047; // permanent day
+    if (hour[mode]==255) {
+      // Permanent day/night sets the unreachable limit values
+      if ((Settings.latitude > 0) != (RtcTime.month>=4 && RtcTime.month<=9)) {
+        duskdawn->time=2046; // permanent night 
+      } else {
+        duskdawn->time=2047; // permanent day
+      }
+      // So skip the offset/underflow/overflow/day-shift
+      return;
     }
-    // So skip the offset/underflow/overflow/day-shift
-    return;
-  }
 
-  // apply offsets, check for over- and underflows
-  uint16_t timeBuffer;
-  if ((uint16_t)stored.time > 719) {
-    // negative offset, time after 12:00
-    timeBuffer = (uint16_t)stored.time - 720;
-    // check for underflow
-    if (timeBuffer > (uint16_t)duskdawn->time) {
-      timeBuffer = 1440 - (timeBuffer - (uint16_t)duskdawn->time);
-      duskdawn->days = duskdawn->days >> 1;
-      duskdawn->days |= (stored.days << 6);
+    // add offsets from sunrise/set from Timer setting
+    timeBuffer+= (hour[mode] *60) + minute[mode];
+    if (duskdawn->time>720)  { 
+      timeBuffer+= 1440-duskdawn->time;
     } else {
-      timeBuffer = (uint16_t)duskdawn->time - timeBuffer;
+      timeBuffer+= duskdawn->time;
     }
+  
   } else {
-    // positive offset
-    timeBuffer = (uint16_t)duskdawn->time + (uint16_t)stored.time;
-    // check for overflow
-    if (timeBuffer >= 1440) {
-      timeBuffer -= 1440;
-      duskdawn->days = duskdawn->days << 1;
-      duskdawn->days |= (stored.days >> 6);
-    }
+  // add time from Timer setting
+    timeBuffer += duskdawn->time;
+  }
+#else // USE_SUNRISE
+  // add time from Timer setting
+  timeBuffer += duskdawn->time;
+#endif // USE_SUNRISE
+
+  // check for over- and underflows
+  mode = duskdawn->days; // reusing mode as tempdays
+  if (timeBuffer >= 1440) {
+    // positive offset, time in next day
+    timeBuffer -= 1440;
+    duskdawn->days = (mode << 1) | (mode >> 6);
+  }
+  if (timeBuffer < 0) {
+    // negative offset, time in previous day
+    timeBuffer+= 1440;
+    duskdawn->days = (mode >> 1) | (mode << 6);
   }
   duskdawn->time = timeBuffer;
 }
@@ -264,24 +271,12 @@ void TimerEverySecond(void)
       for (uint32_t i = 0; i < MAX_TIMERS; i++) {
         Timer xtimer = Settings.timer[i];
         if (xtimer.arm) {
-#ifdef USE_SUNRISE
-          if ((1 == xtimer.mode) || (2 == xtimer.mode)) {      // Sunrise or Sunset
-            ApplyTimerOffsets(&xtimer);
-            if (xtimer.time>=2046) { continue; }
-          }
-#endif
-          int32_t set_time = xtimer.time + timer_window[i];  // Add random time offset
-          if (set_time < 0) {
-            set_time = abs(timer_window[i]);                 // After midnight and within negative window so stay today but allow positive randomness;
-          }
-          if (set_time > 1439) {
-            set_time = xtimer.time - abs(timer_window[i]);   // Before midnight and within positive window so stay today but allow negative randomness;
-          }
-          if (set_time > 1439) { set_time = 1439; }          // Stay today
+          ApplyTimerOffsets(&xtimer, i);
+          if (xtimer.time>=2046) { continue; }
 
           DEBUG_DRIVER_LOG(PSTR("TIM: Timer %d, Time %d, Window %d, SetTime %d"), i +1, xtimer.time, timer_window[i], set_time);
 
-          if (time == set_time) {
+          if (time == xtimer.time) {
             if (xtimer.days & days) {
               Settings.timer[i].arm = xtimer.repeat;
 #if defined(USE_RULES) || defined(USE_SCRIPT)

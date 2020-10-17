@@ -162,7 +162,66 @@ void DuskTillDawn(uint8_t *hour_up,uint8_t *minute_up, uint8_t *hour_down, uint8
   *hour_down = UntergangStunden;
   *minute_down = UntergangMinuten;
 }
+#endif // USE_SUNRISE
 
+void ApplyTimerOffsets(Timer *duskdawn, uint32_t i, int32_t currTime)
+{
+  uint8_t hour[2];
+  uint8_t minute[2];
+  Timer stored = (Timer)*duskdawn;
+  int32_t timeBuffer= duskdawn->time; 
+  
+#ifdef USE_SUNRISE
+  if ((1 == duskdawn->mode) || (2 == duskdawn->mode)) { // Sunrise or Sunset
+    // replace hours, minutes by sunrise
+    DuskTillDawn(&hour[1], &minute[1], &hour[0], &minute[0]);
+    uint8_t mode = duskdawn->mode&1;
+    timeBuffer+= (hour[mode] *60) + minute[mode];
+
+    if (hour[mode]==255) {
+      // Permanent day/night sets the unreachable limit values
+      duskdawn->time=2047; // permanent day 2047
+      // ((Settings.latitude>0) != (RtcTime.month>=4 && RtcTime.month<=9)) {
+      if ((Settings.latitude>0) != (((uint8_t)(RtcTime.month-4)<6))) {
+        duskdawn->time--;  // permanent night 2046
+      }
+      // So skip the offset/underflow/overflow/day-shift
+      return;
+    }
+
+    // if original time init was supposed to be negative, subtract it now twice
+    if (duskdawn->time>720)  { 
+      timeBuffer-= (duskdawn->time<<1) -720;
+    }
+  } 
+#endif // USE_SUNRISE
+
+  // if exactly at the start of the allowed random window, assign new random offset now
+  // This to avoid random window firing twice or not at all especially during midnight passes
+  // It also avoids having to assign random value from many different locations (init, config change, etc)
+  if (((currTime + Settings.timer[i].window)%1440) == ((timeBuffer+1440)%1440)) {
+    timer_window[i] = random(-Settings.timer[i].window, Settings.timer[i].window+1);  // -15 .. 15
+  }
+  
+  // Apply random offset (either just now assigned, or already a few minutes ago)
+  timeBuffer += timer_window[i];
+  
+  // check for underflow
+  if (timeBuffer < 0) {
+    timeBuffer+= 1440;
+    duskdawn->days = (stored.days >> 1) | (stored.days << 6);
+  }
+  // check for overflow
+  if (timeBuffer >= 1440) {
+    timeBuffer -= 1440;
+    duskdawn->days = (stored.days << 1) | (stored.days >> 6);
+  }
+  
+  // Return value
+  duskdawn->time = timeBuffer;
+}
+
+#ifdef USE_SUNRISE
 String GetSun(uint32_t dawn)
 {
   char stime[6];
@@ -189,65 +248,6 @@ uint16_t SunMinutes(uint32_t dawn)
 #endif  // USE_SUNRISE
 
 /*******************************************************************************************/
-
-void ApplyTimerOffsets(Timer *duskdawn, uint32_t i, int32_t currTime)
-{
-  uint8_t hour[2];
-  uint8_t minute[2];
-  uint8_t mode = duskdawn->mode&0x01;
-  int32_t timeBuffer= duskdawn->time; 
-  //uint8_t dayBuffer; // lateron we reuse mode for this temp storage
-  
-#ifdef USE_SUNRISE
-  if ((1 == duskdawn->mode) || (2 == duskdawn->mode)) { // Sunrise or Sunset
-    // retrieve hours, minutes for sunrise, sunset
-    DuskTillDawn(&hour[1], &minute[1], &hour[0], &minute[0]);
-
-    if (hour[mode]==255) { // Permanent day/night sets the unreachable limit values
-      duskdawn->time=2047; // permanent day 2047
-      // ((Settings.latitude>0) != (RtcTime.month>=4 && RtcTime.month<=9)) {
-      if ((Settings.latitude>0) != (((uint8_t)(RtcTime.month-4)<6))) {
-        duskdawn->time--;  // permanent night 2046
-      }
-      return;
-    }
-
-    // Add sunrise/sunset to time
-    timeBuffer+= (hour[mode] *60) + minute[mode];
-
-    // if original time init was supposed to be negative, subtract it now twice
-    if (duskdawn->time>720)  { 
-      timeBuffer-= (duskdawn->time<<1) -720;
-    }
-  } 
-#endif // USE_SUNRISE
-
-  // if exactly at the start of the allowed random window, assign new random offset now
-  // This to avoid random window firing twice or not at all especially during midnight passes
-  // It also avoids having to assign random value from many different locations (init, config change, etc)
-  if (((currTime + Settings.timer[i].window)%1440) == ((timeBuffer+1440)%1440)) {
-    timer_window[i] = random(-Settings.timer[i].window, Settings.timer[i].window+1);  // -15 .. 15
-  }
-  
-  // Apply random offset (either just now assigned, or already a few minutes ago)
-  timeBuffer += timer_window[i];
-  
-  // check for over- and underflows and move into other day
-  mode = duskdawn->days; // reusing mode as dayBuffer
-  if (timeBuffer >= 1440) {
-    // positive offset, time in next day
-    timeBuffer -= 1440;
-    duskdawn->days = (mode << 1) | (mode >> 6);
-  }
-  if (timeBuffer < 0) {
-    // negative offset, time in previous day
-    timeBuffer+= 1440;
-    duskdawn->days = (mode >> 1) | (mode << 6);
-  }
-
-  // Return value
-  duskdawn->time = timeBuffer;
-}
 
 void TimerEverySecond(void)
 {

@@ -163,61 +163,6 @@ void DuskTillDawn(uint8_t *hour_up,uint8_t *minute_up, uint8_t *hour_down, uint8
   *minute_down = UntergangMinuten;
 }
 
-void ApplyTimerOffsets(Timer *duskdawn, uint32_t i)
-{
-  uint8_t hour[2];
-  uint8_t minute[2];
-  uint8_t mode = duskdawn->mode&0x01;
-  sint16_t timeBuffer = timer_window[i]; // Random offset window
-  
-#ifdef USE_SUNRISE
-  if ((1 == duskdawn->mode) || (2 == duskdawn->mode)) {      // Sunrise or Sunset
-    // replace hours, minutes by sunrise
-    DuskTillDawn(&hour[1], &minute[1], &hour[0], &minute[0]);
-
-    if (hour[mode]==255) {
-      // Permanent day/night sets the unreachable limit values
-      if ((Settings.latitude > 0) != (RtcTime.month>=4 && RtcTime.month<=9)) {
-        duskdawn->time=2046; // permanent night 
-      } else {
-        duskdawn->time=2047; // permanent day
-      }
-      // So skip the offset/underflow/overflow/day-shift
-      return;
-    }
-
-    // add offsets from sunrise/set from Timer setting
-    timeBuffer+= (hour[mode] *60) + minute[mode];
-    if (duskdawn->time>720)  { 
-      timeBuffer+= 1440-duskdawn->time;
-    } else {
-      timeBuffer+= duskdawn->time;
-    }
-  
-  } else {
-  // add time from Timer setting
-    timeBuffer += duskdawn->time;
-  }
-#else // USE_SUNRISE
-  // add time from Timer setting
-  timeBuffer += duskdawn->time;
-#endif // USE_SUNRISE
-
-  // check for over- and underflows
-  mode = duskdawn->days; // reusing mode as tempdays
-  if (timeBuffer >= 1440) {
-    // positive offset, time in next day
-    timeBuffer -= 1440;
-    duskdawn->days = (mode << 1) | (mode >> 6);
-  }
-  if (timeBuffer < 0) {
-    // negative offset, time in previous day
-    timeBuffer+= 1440;
-    duskdawn->days = (mode >> 1) | (mode << 6);
-  }
-  duskdawn->time = timeBuffer;
-}
-
 String GetSun(uint32_t dawn)
 {
   char stime[6];
@@ -245,23 +190,68 @@ uint16_t SunMinutes(uint32_t dawn)
 
 /*******************************************************************************************/
 
-void TimerSetRandomWindow(uint32_t index)
+void ApplyTimerOffsets(Timer *duskdawn, uint32_t i, int32_t currTime)
 {
-  timer_window[index] = 0;
-  if (Settings.timer[index].window) {
-    timer_window[index] = (random(0, (Settings.timer[index].window << 1) +1)) - Settings.timer[index].window;  // -15 .. 15
-  }
-}
+  uint8_t hour[2];
+  uint8_t minute[2];
+  uint8_t mode = duskdawn->mode&0x01;
+  int32_t timeBuffer= duskdawn->time; 
+  //uint8_t dayBuffer; // lateron we reuse mode for this temp storage
+  
+#ifdef USE_SUNRISE
+  if ((1 == duskdawn->mode) || (2 == duskdawn->mode)) { // Sunrise or Sunset
+    // retrieve hours, minutes for sunrise, sunset
+    DuskTillDawn(&hour[1], &minute[1], &hour[0], &minute[0]);
 
-void TimerSetRandomWindows(void)
-{
-  for (uint32_t i = 0; i < MAX_TIMERS; i++) { TimerSetRandomWindow(i); }
+    if (hour[mode]==255) { // Permanent day/night sets the unreachable limit values
+      duskdawn->time=2047; // permanent day 2047
+      // ((Settings.latitude>0) != (RtcTime.month>=4 && RtcTime.month<=9)) {
+      if ((Settings.latitude>0) != (((uint8_t)(RtcTime.month-4)<6))) {
+        duskdawn->time--;  // permanent night 2046
+      }
+      return;
+    }
+
+    // Add sunrise/sunset to time
+    timeBuffer+= (hour[mode] *60) + minute[mode];
+
+    // if original time init was supposed to be negative, subtract it now twice
+    if (duskdawn->time>720)  { 
+      timeBuffer-= (duskdawn->time<<1) -720;
+    }
+  } 
+#endif // USE_SUNRISE
+
+  // if exactly at the start of the allowed random window, assign new random offset now
+  // This to avoid random window firing twice or not at all especially during midnight passes
+  // It also avoids having to assign random value from many different locations (init, config change, etc)
+  if (((currTime + Settings.timer[i].window)%1440) == ((timeBuffer+1440)%1440)) {
+    timer_window[i] = random(-Settings.timer[i].window, Settings.timer[i].window+1);  // -15 .. 15
+  }
+  
+  // Apply random offset (either just now assigned, or already a few minutes ago)
+  timeBuffer += timer_window[i];
+  
+  // check for over- and underflows and move into other day
+  mode = duskdawn->days; // reusing mode as dayBuffer
+  if (timeBuffer >= 1440) {
+    // positive offset, time in next day
+    timeBuffer -= 1440;
+    duskdawn->days = (mode << 1) | (mode >> 6);
+  }
+  if (timeBuffer < 0) {
+    // negative offset, time in previous day
+    timeBuffer+= 1440;
+    duskdawn->days = (mode >> 1) | (mode << 6);
+  }
+
+  // Return value
+  duskdawn->time = timeBuffer;
 }
 
 void TimerEverySecond(void)
 {
   if (RtcTime.valid) {
-    if (!RtcTime.hour && !RtcTime.minute && !RtcTime.second) { TimerSetRandomWindows(); }  // Midnight
     if (Settings.flag3.timers_enable &&                            // CMND_TIMERS
         (uptime > 60) && (RtcTime.minute != timer_last_minute)) {  // Execute from one minute after restart every minute only once
       timer_last_minute = RtcTime.minute;
@@ -271,7 +261,7 @@ void TimerEverySecond(void)
       for (uint32_t i = 0; i < MAX_TIMERS; i++) {
         Timer xtimer = Settings.timer[i];
         if (xtimer.arm) {
-          ApplyTimerOffsets(&xtimer, i);
+          ApplyTimerOffsets(&xtimer, i, time);
           if (xtimer.time>=2046) { continue; }
 
           DEBUG_DRIVER_LOG(PSTR("TIM: Timer %d, Time %d, Window %d, SetTime %d"), i +1, xtimer.time, timer_window[i], set_time);
@@ -397,7 +387,6 @@ void CmndTimer(void)
             val = root[PSTR(D_JSON_TIMER_WINDOW)];
             if (val) {
               Settings.timer[index].window = val.getUInt() & 0x0F;
-              TimerSetRandomWindow(index);
             }
             val = root[PSTR(D_JSON_TIMER_DAYS)];
             if (val) {
@@ -890,9 +879,7 @@ void TimerSaveSettings(void)
     timer.data = strtol(p, &p, 10);
     p++;  // Skip comma
     if (timer.time < 1440) {
-      bool flag = (timer.window != Settings.timer[i].window);
       Settings.timer[i].data = timer.data;
-      if (flag) TimerSetRandomWindow(i);
     }
     snprintf_P(message, sizeof(message), PSTR("%s,0x%08X"), message, Settings.timer[i].data);
   }
@@ -910,9 +897,6 @@ bool Xdrv09(uint8_t function)
   bool result = false;
 
   switch (function) {
-    case FUNC_PRE_INIT:
-      TimerSetRandomWindows();
-      break;
 #ifdef USE_WEBSERVER
 #ifdef USE_TIMERS_WEB
     case FUNC_WEB_ADD_BUTTON:
